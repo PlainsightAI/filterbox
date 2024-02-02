@@ -1,0 +1,14 @@
+.idea/
+.scannerwork
+.sonar
+.vscode
+vendor
+cover.out
+.env
+main
+.properties
+cloud-proxy
+__debug_bin
+config.json
+filterbox
+dist/

@@ -1,0 +1,55 @@
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  govet:
+    check-shadowing: false
+  gofmt:
+    simplify: false
+  golint:
+    min-confidence: 0
+  gocyclo:
+    min-complexity: 20
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  misspell:
+    locale: US
+  goimports:
+    local-prefixes: github.com/PlainsightAI/filterbox
+
+linters:
+  disable-all: true
+  enable:
+    - typecheck
+    - ineffassign
+    - govet
+    - unconvert
+    - goconst
+    - gofmt
+    - goimports
+    - misspell
+    - prealloc
+    - unused
+    - errcheck
+    - gosec
+    - gocyclo  
+
+run:
+  skip-files: []
+  skip-dirs:
+    - "./output"
+    - "./_archive"
+
+issues:
+  exclude:
+    - "should have a package comment, unless it's in another file for this package"
+    - "should not use basic type string as key in context.WithValue"
+    - "type `DeviceXMlModel` should be `DeviceXMLModel`"
+    - "should have comment"
+    - "that stutters"
+    - "is unused"
+  exclude-use-default: false
+  max-same-issues: 0
