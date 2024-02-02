@@ -36,4 +36,4 @@ jobs:
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.filterbox_ACCESS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
