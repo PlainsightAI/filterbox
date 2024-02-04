@@ -1,0 +1,33 @@
+version: "3.9"
+
+networks:
+  filterbox:
+
+volumes:
+  data:
+    driver: local
+
+services:
+    nanomq:
+      image: emqx/nanomq:latest
+      networks:
+        - filterbox
+      volumes:
+        - "./nanomq.conf:/etc/nanomq.conf"
+      ports:
+        - "1883:1883" # Broker
+        - "8081:8081" # http
+        - "8081:8081" # http
+        - "8083:8083" # mqtt
+        - "8883:8883" # mqtt-ssl
+
+    filter:
+      image: sixgill/filter-blur:0.1.0
+      volumes:
+        - "./config.ini:/src/config.ini"      
+      networks:
+        - filterbox
+      ports:
+        - "8080:8080" # http
+      depends_on:
+        - nanomq

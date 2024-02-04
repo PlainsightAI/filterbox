@@ -1,2 +1,5 @@
 .git
 .idea
+config.ini
+docker-compose.yml
+nanomq.conf
