@@ -170,6 +170,56 @@ func startFilterAction(ctx *urcli.Context) error {
 	return nil
 }
 
+func dockerSetup() error {
+	// Check if Docker is already installed
+	if _, err := exec.LookPath("docker"); err == nil {
+		return nil
+	}
+
+	// Install Docker using shell commands
+	cmd := exec.Command("bash", "-c", "curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	fmt.Println("Installing Docker...")
+
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("Error installing Docker: %v\n", err)
+		return err
+	}
+
+	fmt.Println("Docker installed successfully.")
+
+	fmt.Println("Starting Docker daemon...")
+
+	// Start Docker daemon
+	startCmd := exec.Command("systemctl", "start", "docker")
+	startCmd.Stdout = os.Stdout
+	startCmd.Stderr = os.Stderr
+
+	if err = startCmd.Run(); err != nil {
+		fmt.Printf("Error starting Docker daemon: %v\n", err)
+		return err
+	}
+
+	fmt.Println("Docker daemon started successfully.")
+
+	// Enable Docker daemon to start on boot
+	enableCmd := exec.Command("systemctl", "enable", "docker")
+	enableCmd.Stdout = os.Stdout
+	enableCmd.Stderr = os.Stderr
+
+	if err = enableCmd.Run(); err != nil {
+		fmt.Printf("Error enabling Docker daemon: %v\n", err)
+		return err
+	}
+
+	fmt.Println("Docker daemon enabled to start on boot.")
+
+	return nil
+}
+
 func stopFiltersAction(ctx *urcli.Context) error {
 	k8sClient, err := K8sClient()
 	if err != nil || k8sClient == nil {
@@ -409,6 +459,11 @@ func setupKubeConfig() error {
 }
 
 func initAction(cCtx *urcli.Context) error {
+
+	if err := dockerSetup(); err != nil {
+		return err
+	}
+
 	if err := checkK8s(); err != nil {
 		return err
 	}
@@ -767,8 +822,6 @@ func K8sClient() (*kubernetes.Clientset, error) {
 		return client, nil
 	}
 
-	println("failed to find k8s client config")
-	println("make sure ~/.kube/config is setup properly")
 	return nil, errors.New("failed to get kubernetes client")
 }
 

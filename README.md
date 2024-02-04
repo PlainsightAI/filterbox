@@ -27,14 +27,14 @@ Install filterbox:
 
 ARCH=arm64 
 
-VERSION=0.9.0
+VERSION=0.1.0
 ``` bash
 wget "https://github.com/PlainsightAI/filterbox/releases/download/v$VERSION/filterbox_Linux_$ARCH.tar.gz"
 ```
 
 ARCH=x86_64
 
-VERSION=0.9.0
+VERSION=0.1.0
 ``` bash 
 wget "https://github.com/PlainsightAI/filterbox/releases/download/v$VERSION/filterbox_Linux_$ARCH.tar.gz"
 ```
