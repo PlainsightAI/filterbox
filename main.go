@@ -194,7 +194,7 @@ func dockerSetup() error {
 	fmt.Println("Starting Docker daemon...")
 
 	// Start Docker daemon
-	startCmd := exec.Command("systemctl", "start", "docker")
+	startCmd := exec.Command("sudo", "systemctl", "start", "docker")
 	startCmd.Stdout = os.Stdout
 	startCmd.Stderr = os.Stderr
 
@@ -206,7 +206,7 @@ func dockerSetup() error {
 	fmt.Println("Docker daemon started successfully.")
 
 	// Enable Docker daemon to start on boot
-	enableCmd := exec.Command("systemctl", "enable", "docker")
+	enableCmd := exec.Command("sudo", "systemctl", "enable", "docker")
 	enableCmd.Stdout = os.Stdout
 	enableCmd.Stderr = os.Stderr
 
