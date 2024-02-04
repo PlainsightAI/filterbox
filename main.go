@@ -175,49 +175,8 @@ func dockerSetup() error {
 	if _, err := exec.LookPath("docker"); err == nil {
 		return nil
 	}
-
-	// Install Docker using shell commands
-	cmd := exec.Command("bash", "-c", "curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	fmt.Println("Installing Docker...")
-
-	err := cmd.Run()
-	if err != nil {
-		fmt.Printf("Error installing Docker: %v\n", err)
-		return err
-	}
-
-	fmt.Println("Docker installed successfully.")
-
-	fmt.Println("Starting Docker daemon...")
-
-	// Start Docker daemon
-	startCmd := exec.Command("sudo", "systemctl", "start", "docker")
-	startCmd.Stdout = os.Stdout
-	startCmd.Stderr = os.Stderr
-
-	if err = startCmd.Run(); err != nil {
-		fmt.Printf("Error starting Docker daemon: %v\n", err)
-		return err
-	}
-
-	fmt.Println("Docker daemon started successfully.")
-
-	// Enable Docker daemon to start on boot
-	enableCmd := exec.Command("sudo", "systemctl", "enable", "docker")
-	enableCmd.Stdout = os.Stdout
-	enableCmd.Stderr = os.Stderr
-
-	if err = enableCmd.Run(); err != nil {
-		fmt.Printf("Error enabling Docker daemon: %v\n", err)
-		return err
-	}
-
-	fmt.Println("Docker daemon enabled to start on boot.")
-
-	return nil
+	println("https://docs.docker.com/engine/install/")
+	return errors.New("please setup docker first")
 }
 
 func stopFiltersAction(ctx *urcli.Context) error {
