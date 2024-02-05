@@ -175,11 +175,36 @@ func dockerSetup() error {
 	if _, err := exec.LookPath("docker"); err == nil {
 		return nil
 	}
-	println("please setup docker first")
-	println()
-	println("sudo apt install docker.io")
-	println("sudo usermod -aG docker $USER")
-	return errors.New("https://docs.docker.com/engine/install/")
+
+	// Attempt to install Docker
+	fmt.Println("Docker is not installed. Attempting to install...")
+
+	// Update APT
+	updateAPTCmd := exec.Command("sudo", "apt", "update")
+	updateAPTCmd.Stdout = os.Stdout
+	updateAPTCmd.Stderr = os.Stderr
+	if err := updateAPTCmd.Run(); err != nil {
+		return errors.New("failed to update APT")
+	}
+
+	// Run installation commands
+	installCmd := exec.Command("sudo", "apt", "install", "docker.io", "-y")
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	if err := installCmd.Run(); err != nil {
+		return errors.New("failed to install Docker, please install it manually")
+	}
+
+	// Add the user to the docker group
+	usermodCmd := exec.Command("sudo", "usermod", "-aG", "docker", os.Getenv("USER"))
+	usermodCmd.Stdout = os.Stdout
+	usermodCmd.Stderr = os.Stderr
+	if err := usermodCmd.Run(); err != nil {
+		return errors.New("failed to add user to the docker group, please add manually")
+	}
+
+	fmt.Println("Docker has been installed successfully.")
+	return nil
 }
 
 func stopFiltersAction(ctx *urcli.Context) error {
