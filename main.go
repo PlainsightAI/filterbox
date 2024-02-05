@@ -175,8 +175,11 @@ func dockerSetup() error {
 	if _, err := exec.LookPath("docker"); err == nil {
 		return nil
 	}
-	println("https://docs.docker.com/engine/install/")
-	return errors.New("please setup docker first")
+	println("please setup docker first")
+	println()
+	println("sudo apt install docker.io")
+	println("sudo usermod -aG docker $USER")
+	return errors.New("https://docs.docker.com/engine/install/")
 }
 
 func stopFiltersAction(ctx *urcli.Context) error {
