@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1Networking "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -40,12 +40,11 @@ import (
 )
 
 var (
-	version  = "unknown"
-	commit   = "unknown"
-	date     = "unknown"
-	settings *cli.EnvSettings
-	src      rand.Source
-
+	version   = "unknown"
+	commit    = "unknown"
+	date      = "unknown"
+	settings  *cli.EnvSettings
+	src       rand.Source
 	url       = "https://plainsightai.github.io/helm-charts/"
 	repoName  = "plainsight-technologies"
 	namespace = "plainsight"
@@ -58,6 +57,28 @@ func init() {
 }
 
 func main() {
+
+	// Retrieve information about the host OS and architecture
+	operatingSys := runtime.GOOS
+	arch := runtime.GOARCH
+
+	if operatingSys != "linux" {
+		println("Currently only linux is supported")
+		os.Exit(1)
+	}
+
+	var validArch = false
+
+	switch arch {
+	case "amd64", "x86_64", "arm64":
+		validArch = true
+	}
+
+	if !validArch {
+		println(fmt.Sprintf("Detected Linux but unsupported architecture: %s", arch))
+		os.Exit(1)
+	}
+
 	app := &urcli.App{
 		Version: version,
 		Usage:   "Plainsight Edge Controller CLI",
@@ -494,11 +515,11 @@ func InstallIngress(ctx context.Context, name string, port int32, k8sClient *kub
 	prefixPathTyp := v1Networking.PathTypePrefix
 
 	_, err := k8sClient.NetworkingV1().Ingresses(namespace).Create(ctx, &v1Networking.Ingress{
-		TypeMeta: v1.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Ingress",
 			APIVersion: "networking.k8s.io/v1",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-ingress", name),
 			Namespace: namespace,
 		},
@@ -534,13 +555,13 @@ func InstallIngress(ctx context.Context, name string, port int32, k8sClient *kub
 
 func AddNamespace(ctx context.Context, client *kubernetes.Clientset) {
 	// check if namespace already exists
-	_, err := client.CoreV1().Namespaces().Get(ctx, namespace, v1.GetOptions{})
+	_, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err == nil {
 		return
 	}
 
-	ns := &corev1.Namespace{ObjectMeta: v1.ObjectMeta{Name: namespace}}
-	_, err = client.CoreV1().Namespaces().Create(ctx, ns, v1.CreateOptions{})
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
+	_, err = client.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
