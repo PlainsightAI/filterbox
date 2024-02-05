@@ -81,18 +81,18 @@ func main() {
 
 	app := &urcli.App{
 		Version: version,
-		Usage:   "Plainsight Edge Controller CLI",
+		Usage:   "Plainsight Filterbox Controller CLI",
 		Commands: []*urcli.Command{
 			{
 				Name:    "init",
 				Aliases: []string{"i"},
-				Usage:   "initialize edge device",
+				Usage:   "initialize filterbox device",
 				Action:  initAction,
 			},
 			{
 				Name:    "filter",
 				Aliases: []string{"f"},
-				Usage:   "actions for filter resource",
+				Usage:   "actions for filter resources",
 				Subcommands: []*urcli.Command{
 					{
 						Name:    "install",
@@ -319,7 +319,7 @@ func installFilterAction(cCtx *urcli.Context) error {
 	filterMenu := gocliselect.NewMenu("Choose a Filter")
 	filterMenu.AddItem("Face Blur", "filter-blur")
 	filterMenu.AddItem("General Object Detection", "filter-object-detection")
-	filterMenu.AddItem("Pong", "filter-pong")
+	filterMenu.AddItem("Seymour Pong", "filter-pong")
 	filterChoice := filterMenu.Display()
 
 	filterVersionMenu := gocliselect.NewMenu("Choose a Filter Version")
