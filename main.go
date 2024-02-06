@@ -145,6 +145,9 @@ func uninstallFilterAction(ctx *urcli.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(deps.Items) == 0 {
+		return nil
+	}
 
 	filterMenu := gocliselect.NewMenu("Choose a Filter")
 	for _, dep := range deps.Items {
@@ -166,6 +169,9 @@ func startFilterAction(ctx *urcli.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	if len(deps.Items) == 0 {
+		return nil
 	}
 
 	filterMenu := gocliselect.NewMenu("Choose a Filter")
@@ -239,6 +245,9 @@ func stopFiltersAction(ctx *urcli.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	if len(deps.Items) == 0 {
+		return nil
 	}
 
 	filterMenu := gocliselect.NewMenu("Choose a Filter")
@@ -317,7 +326,6 @@ func installFilterAction(cCtx *urcli.Context) error {
 	RepoUpdate()
 
 	filterMenu := gocliselect.NewMenu("Choose a Filter")
-	filterMenu.AddItem("Face Blur", "filter-blur")
 	filterMenu.AddItem("General Object Detection", "filter-object-detection")
 	filterMenu.AddItem("Seymour Pong", "filter-pong")
 	filterChoice := filterMenu.Display()
