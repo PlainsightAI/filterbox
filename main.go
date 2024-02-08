@@ -81,9 +81,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := exec.LookPath("curl"); err != nil {
-		println("please install curl")
-		os.Exit(1)
+	var (
+		curlExists = false
+		wgetExists = false
+	)
+
+	if _, err := exec.LookPath("curl"); err == nil {
+		curlExists = true
+	}
+
+	if _, err := exec.LookPath("wget"); err == nil {
+		wgetExists = true
+	}
+
+	if !curlExists && !wgetExists {
+		println("sudo apt update")
+		println("sudo apt install curl")
+		println("sudo apt install wget ")
+		log.Fatal("You must install either curl or wget")
 	}
 
 	app := &urcli.App{
