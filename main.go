@@ -40,14 +40,16 @@ import (
 )
 
 var (
-	version   = "unknown"
-	commit    = "unknown"
-	date      = "unknown"
-	settings  *cli.EnvSettings
-	src       rand.Source
-	url       = "https://plainsightai.github.io/helm-charts/"
-	repoName  = "plainsight-technologies"
-	namespace = "plainsight"
+	version        = "unknown"
+	commit         = "unknown"
+	date           = "unknown"
+	settings       *cli.EnvSettings
+	src            rand.Source
+	url            = "https://plainsightai.github.io/helm-charts/"
+	helmInstallURL = "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+	k3sInstallURL  = "https://get.k3s.io"
+	repoName       = "plainsight-technologies"
+	namespace      = "plainsight"
 )
 
 func init() {
@@ -379,7 +381,47 @@ func checkHelm() error {
 		input = strings.TrimSuffix(input, "\n")
 
 		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
-			cmd := exec.Command("sh", "-c", "curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
+			// Make an HTTP GET request to fetch the script content
+			resp, err := http.Get(helmInstallURL)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					panic(err)
+				}
+			}()
+
+			// Create a temporary file to store the script
+			file, err := os.CreateTemp("", "helm-script-")
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := os.Remove(file.Name()); err != nil {
+					panic(err)
+				}
+			}()
+
+			// Write the script content to the temporary file
+			_, err = io.Copy(file, resp.Body)
+			if err != nil {
+				return err
+			}
+
+			// Close the file to ensure it's fully written and closed
+			if err := file.Close(); err != nil {
+				return err
+			}
+
+			// Make the script file executable
+			err = os.Chmod(file.Name(), 0755)
+			if err != nil {
+				return err
+			}
+
+			// Execute the script
+			cmd := exec.Command(file.Name())
 
 			// Set the output to os.Stdout and os.Stderr to see the installation progress
 			cmd.Stdout = os.Stdout
@@ -414,7 +456,50 @@ func checkK8s() error {
 		input = strings.TrimSuffix(input, "\n")
 
 		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
-			cmd := exec.Command("sh", "-c", "curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC=\"--docker\" sh -s - --write-kubeconfig-mode 644")
+			// Make an HTTP GET request to fetch the script content
+			resp, err := http.Get(k3sInstallURL)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					panic(err)
+				}
+			}()
+
+			// Create a temporary file to store the script
+			file, err := os.CreateTemp("", "k3s-script-")
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := os.Remove(file.Name()); err != nil {
+					panic(err)
+				}
+			}()
+
+			// Write the script content to the temporary file
+			_, err = io.Copy(file, resp.Body)
+			if err != nil {
+				return err
+			}
+
+			// Close the file to ensure it's fully written and closed
+			if err := file.Close(); err != nil {
+				return err
+			}
+
+			// Make the script file executable
+			err = os.Chmod(file.Name(), 0755)
+			if err != nil {
+				return err
+			}
+
+			// Set the environment variable for INSTALL_K3S_EXEC
+			_ = os.Setenv("INSTALL_K3S_EXEC", "--docker")
+
+			// Execute the script with the specified arguments
+			cmd := exec.Command("sh", file.Name(), "--write-kubeconfig-mode", "644")
 
 			// Set the output to os.Stdout and os.Stderr to see the installation progress
 			cmd.Stdout = os.Stdout
