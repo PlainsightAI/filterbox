@@ -79,6 +79,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if _, err := exec.LookPath("curl"); err != nil {
+		println("please install curl")
+		os.Exit(1)
+	}
+
 	app := &urcli.App{
 		Version: version,
 		Usage:   "Plainsight Filterbox Controller CLI",
