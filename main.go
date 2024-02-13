@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/nexidian/gocliselect"
 	"github.com/pkg/errors"
 	urcli "github.com/urfave/cli/v2"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v2"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -112,6 +114,32 @@ func main() {
 				Action:  initAction,
 			},
 			{
+				Name:    "registry",
+				Aliases: []string{"reg"},
+				Usage:   "container registry",
+				Subcommands: []*urcli.Command{
+					{
+						Name:    "create",
+						Aliases: []string{"c"},
+						Usage:   "create container/docker registry secrets",
+						Action:  createRegSecretAction,
+					},
+				},
+			},
+			{
+				Name:    "repository",
+				Aliases: []string{"repo"},
+				Usage:   "helm repository",
+				Subcommands: []*urcli.Command{
+					{
+						Name:    "create",
+						Aliases: []string{"c"},
+						Usage:   "create helm repository",
+						Action:  createHelmRepoAction,
+					},
+				},
+			},
+			{
 				Name:    "filter",
 				Aliases: []string{"f"},
 				Usage:   "actions for filter resources",
@@ -153,6 +181,75 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func createHelmRepoAction(c *urcli.Context) error {
+	println("Input your Helm Repository Configuration")
+	name := userInput("name: ")
+	helmUrl := userInput("url: ")
+	username := userInput("username: ")
+	password := secureUserInput("password (hidden): ")
+
+	if err := RepoAdd(name, helmUrl, username, password); err != nil {
+		return err
+	}
+	RepoUpdate()
+	return nil
+}
+
+func userInput(prompt string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print(prompt)
+	text, _ := reader.ReadString('\n')
+	return strings.TrimSpace(text)
+}
+
+func secureUserInput(prompt string) string {
+	fmt.Print(prompt)
+	password, _ := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	return string(password)
+}
+
+func createRegSecretAction(c *urcli.Context) error {
+	println("Input your Docker Registry Server Configuration")
+	server := userInput("server: ")
+	username := userInput("username: ")
+	password := secureUserInput("password (hidden): ")
+	email := userInput("email: ")
+	println("")
+	println("Name your kubernetes secret for reference")
+	secretName := userInput("secret-name: ")
+
+	k8sClient, err := K8sClient()
+	if err != nil || k8sClient == nil {
+		return err
+	}
+
+	// Create a new secret
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			".dockerconfigjson": []byte(
+				fmt.Sprintf(`{"auths":{"%s":{"username":"%s","password":"%s","email":"%s","auth":"%s"}}}`,
+					server,
+					username,
+					password,
+					email,
+					base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password))))),
+		},
+	}
+
+	_, err = k8sClient.CoreV1().Secrets(namespace).Create(c.Context, secret, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func uninstallFilterAction(ctx *urcli.Context) error {
@@ -358,15 +455,9 @@ func installFilterAction(cCtx *urcli.Context) error {
 
 	println("Input your Video Source?")
 	println("this can be a device number for a USB Device (example: 0,1) ")
-	println("or this can be an RTSP Address (example: rtsp://10.100.10.20:8000/uniqueIdHere")
-	reader := bufio.NewReader(os.Stdin)
-	// ReadString will block until the delimiter is entered
-	rtspInput, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-	// remove the delimeter from the string
-	rtspInput = strings.TrimSuffix(rtspInput, "\n")
+	println("this can be an RTSP Address (example: rtsp://10.100.10.20:8000/uniqueIdHere")
+
+	rtspInput := userInput("input: ")
 
 	args := map[string]interface{}{
 		"filterName":    filterChoice,
@@ -384,16 +475,7 @@ func checkHelm() error {
 	if err != nil {
 		println("")
 		println("unable to find helm (kubernetes package manager)")
-		println("would you like to install helm? (Y/n)")
-		reader := bufio.NewReader(os.Stdin)
-		// ReadString will block until the delimiter is entered
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-
-		// remove the delimeter from the string
-		input = strings.TrimSuffix(input, "\n")
+		input := userInput("would you like to install helm? (Y/n): ")
 
 		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
 			// Make an HTTP GET request to fetch the script content
@@ -459,16 +541,7 @@ func checkK8s() error {
 	if err != nil {
 		println("")
 		println("unable to connect to kubernetes cluster")
-		println("would you like to install k3s? (Y/n)")
-		reader := bufio.NewReader(os.Stdin)
-		// ReadString will block until the delimiter is entered
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-
-		// remove the delimeter from the string
-		input = strings.TrimSuffix(input, "\n")
+		input := userInput("would you like to install k3s? (Y/n)")
 
 		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
 			// Make an HTTP GET request to fetch the script content
@@ -608,7 +681,7 @@ func initAction(cCtx *urcli.Context) error {
 	}
 
 	// Add helm repo
-	RepoAdd(repoName, url)
+	RepoAdd(repoName, url, "", "")
 	// Update charts from the helm repo
 	RepoUpdate()
 	// Setup Plainsight Namaespace
@@ -681,13 +754,13 @@ func AddNamespace(ctx context.Context, client *kubernetes.Clientset) {
 }
 
 // RepoAdd adds repo with given name and url
-func RepoAdd(name, url string) {
+func RepoAdd(name, url, username, password string) error {
 	repoFile := settings.RepositoryConfig
 
 	//Ensure the file directory exists as it is required for file locking
 	err := os.MkdirAll(filepath.Dir(repoFile), os.ModePerm)
 	if err != nil && !os.IsExist(err) {
-		log.Fatal(err)
+		return err
 	}
 
 	// Acquire a file lock for process synchronization
@@ -708,7 +781,7 @@ func RepoAdd(name, url string) {
 
 	b, err := os.ReadFile(repoFile)
 	if err != nil && !os.IsNotExist(err) {
-		log.Fatal(err)
+		return err
 	}
 
 	var f repo.File
@@ -717,20 +790,18 @@ func RepoAdd(name, url string) {
 	}
 
 	if f.Has(name) {
-		fmt.Printf("repository name (%s) already exists\n", name)
-		return
+		return fmt.Errorf("repository name (%s) already exists\n", name)
 	}
 
-	c := repo.Entry{Name: name, URL: url}
+	c := repo.Entry{Name: name, URL: url, Username: username, Password: password}
 
 	r, err := repo.NewChartRepository(&c, getter.All(settings))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if _, err := r.DownloadIndexFile(); err != nil {
-		err := errors.Wrapf(err, "looks like %q is not a valid chart repository or cannot be reached", url)
-		log.Fatal(err)
+		return errors.Wrapf(err, "looks like %q is not a valid chart repository or cannot be reached", url)
 	}
 
 	f.Update(&c)
@@ -739,6 +810,7 @@ func RepoAdd(name, url string) {
 		log.Fatal(err)
 	}
 	fmt.Printf("%q has been added to your repositories\n", name)
+	return nil
 }
 
 // RepoUpdate updates charts for all helm repos
