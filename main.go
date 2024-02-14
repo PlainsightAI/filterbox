@@ -84,8 +84,7 @@ func main() {
 	}
 
 	var (
-		curlExists = false
-		wgetExists = false
+		curlExists, wgetExists, socatExists bool
 	)
 
 	if _, err := exec.LookPath("curl"); err == nil {
@@ -96,11 +95,21 @@ func main() {
 		wgetExists = true
 	}
 
+	if _, err := exec.LookPath("socat"); err == nil {
+		socatExists = true
+	}
+
 	if !curlExists && !wgetExists {
 		println("sudo apt update")
 		println("sudo apt install curl")
 		println("sudo apt install wget ")
 		log.Fatal("You must install either curl or wget")
+	}
+
+	if !socatExists {
+		println("sudo apt update")
+		println("sudo apt install socat")
+		log.Fatal("You will need socat for port forwarding")
 	}
 
 	app := &urcli.App{
@@ -681,7 +690,9 @@ func initAction(cCtx *urcli.Context) error {
 	}
 
 	// Add helm repo
-	RepoAdd(repoName, url, "", "")
+	if err := RepoAdd(repoName, url, "", ""); err != nil {
+		return err
+	}
 	// Update charts from the helm repo
 	RepoUpdate()
 	// Setup Plainsight Namaespace
