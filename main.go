@@ -66,30 +66,31 @@ var installDeps = map[string]bool{
 	"socat": false,
 }
 
-func init() {
-	src = rand.NewSource(time.Now().UnixNano())
-
+func updateAvailable() (bool, string, error) {
 	latestRelease, err := latestfilterboxRelease()
 	if err != nil {
-		fmt.Println("Error fetching latest filterbox release:", err)
-		return
+		return false, "", err
 	}
 
 	currentVersion, err := semver.NewVersion(version)
 	if err != nil {
-		fmt.Println("Error parsing current sem version:", err)
-		return
+		return false, "", err
 	}
 
 	availableVersion, err := semver.NewVersion(latestRelease)
 	if err != nil {
-		fmt.Println("Error parsing latest sem version release:", err)
-		return
+		return false, "", err
 	}
 
 	if currentVersion.LessThan(availableVersion) {
-		fmt.Printf("\nNew filterbox version available: %s\n\n", latestRelease)
+		return true, availableVersion.String(), nil
 	}
+
+	return false, "", nil
+}
+
+func init() {
+	src = rand.NewSource(time.Now().UnixNano())
 }
 
 func runCmd(cmd string, args ...string) error {
@@ -138,16 +139,6 @@ func setupNvidiaRuntimeClass() error {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "node.k8s.io/v1", Kind: "RuntimeClass"},
 		ObjectMeta: metav1.ObjectMeta{Name: "nvidia"},
 		Handler:    "nvidia",
-		//Scheduling: &nodev1.Scheduling{
-		//	NodeSelector: map[string]string{"accelerator": "nvidia"},
-		//	Tolerations: []corev1.Toleration{
-		//		{
-		//			Key:      "accelerator",
-		//			Operator: corev1.TolerationOpExists,
-		//			Effect:   corev1.TaintEffectNoSchedule,
-		//		},
-		//	},
-		//},
 	}
 
 	k8sClient, err := K8sClient()
@@ -171,105 +162,120 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := &urcli.App{
-		Version: version,
-		Usage:   "Plainsight Filterbox Controller CLI",
-		Commands: []*urcli.Command{
-			{
-				Name:    "init",
-				Aliases: []string{"i"},
-				Usage:   "initialize filterbox device",
-				Action:  initAction,
-			},
-			{
-				Name:    "nvidia",
-				Aliases: []string{"n"},
-				Usage:   "initialize nvidia",
-				Action:  nvidiaSetupAction,
-			},
-			{
-				Name:    "update",
-				Aliases: []string{"u"},
-				Usage:   "update filterbox to latest version",
-				Action:  updateFitlerboxAction,
-			},
-			{
-				Name:    "registry",
-				Aliases: []string{"reg"},
-				Usage:   "container registry",
-				Subcommands: []*urcli.Command{
-					{
-						Name:    "create",
-						Aliases: []string{"c"},
-						Usage:   "create container/docker registry secrets",
-						Action:  createRegSecretAction,
-					},
-				},
-			},
-			{
-				Name:    "repository",
-				Aliases: []string{"repo"},
-				Usage:   "helm repository",
-				Subcommands: []*urcli.Command{
-					{
-						Name:    "create",
-						Aliases: []string{"c"},
-						Usage:   "create helm repository",
-						Action:  createHelmRepoAction,
-					},
-				},
-			},
-			{
-				Name:    "filter",
-				Aliases: []string{"f"},
-				Usage:   "actions for filter resources",
-				Subcommands: []*urcli.Command{
-					{
-						Name:    "install",
-						Aliases: []string{"i"},
-						Usage:   "install filter on device",
-						Action:  installFilterAction,
-					},
-					{
-						Name:    "list",
-						Aliases: []string{"l"},
-						Usage:   "list filters installed on device",
-						Action:  listFiltersAction,
-					},
-					{
-						Name:    "stop",
-						Aliases: []string{"s"},
-						Usage:   "stop filter installed on device",
-						Action:  stopFiltersAction,
-					},
-					{
-						Name:    "run",
-						Aliases: []string{"r"},
-						Usage:   "run filter installed on device",
-						Action:  startFilterAction,
-					},
-					{
-						Name:    "uninstall",
-						Aliases: []string{"u"},
-						Usage:   "run filter installed on device",
-						Action:  uninstallFilterAction,
-					},
+	cmds := []*urcli.Command{
+		{
+			Name:    "init",
+			Aliases: []string{"i"},
+			Usage:   "initialize filterbox device",
+			Action:  initAction,
+		},
+		{
+			Name:    "nvidia",
+			Aliases: []string{"n"},
+			Usage:   "initialize nvidia drivers and tools",
+			Action:  nvidiaSetupAction,
+		},
+		{
+			Name:    "registry",
+			Aliases: []string{"reg"},
+			Usage:   "container registry",
+			Subcommands: []*urcli.Command{
+				{
+					Name:    "create",
+					Aliases: []string{"c"},
+					Usage:   "create container/docker registry secrets",
+					Action:  createRegSecretAction,
 				},
 			},
 		},
+		{
+			Name:    "repository",
+			Aliases: []string{"repo"},
+			Usage:   "helm repository",
+			Subcommands: []*urcli.Command{
+				{
+					Name:    "create",
+					Aliases: []string{"c"},
+					Usage:   "create helm repository",
+					Action:  createHelmRepoAction,
+				},
+			},
+		},
+		{
+			Name:    "filter",
+			Aliases: []string{"f"},
+			Usage:   "actions for filter resources",
+			Subcommands: []*urcli.Command{
+				{
+					Name:    "install",
+					Aliases: []string{"i"},
+					Usage:   "install filter on device",
+					Action:  installFilterAction,
+				},
+				{
+					Name:    "list",
+					Aliases: []string{"l"},
+					Usage:   "list filters installed on device",
+					Action:  listFiltersAction,
+				},
+				{
+					Name:    "stop",
+					Aliases: []string{"s"},
+					Usage:   "stop filter installed on device",
+					Action:  stopFiltersAction,
+				},
+				{
+					Name:    "run",
+					Aliases: []string{"r"},
+					Usage:   "run filter installed on device",
+					Action:  startFilterAction,
+				},
+				{
+					Name:    "uninstall",
+					Aliases: []string{"u"},
+					Usage:   "run filter installed on device",
+					Action:  uninstallFilterAction,
+				},
+			},
+		},
+	}
+
+	update, newVersion, err := updateAvailable()
+	if err != nil {
+		fmt.Printf("failed to check for update: %v\n", err.Error())
+	}
+
+	if update {
+		fmt.Printf("\nNew filterbox version available: %s\n\n", newVersion)
+		cmds = append(cmds, &urcli.Command{
+			Name:    "update",
+			Aliases: []string{"u"},
+			Usage:   "update filterbox to latest version",
+			Action:  updateFitlerboxAction,
+		})
+	}
+
+	app := &urcli.App{
+		Version:  version,
+		Usage:    "Plainsight Filterbox Controller CLI",
+		Commands: cmds,
 	}
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func updateFitlerboxAction(c *urcli.Context) error {
+func updateFilterBox() error {
 	cmd := exec.Command("bash", "-c", "sudo curl -sfL https://raw.githubusercontent.com/PlainsightAI/filterbox/main/install.sh | bash -")
 	err := cmd.Run()
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func updateFitlerboxAction(c *urcli.Context) error {
+	return updateFilterBox()
 }
 
 func createHelmRepoAction(c *urcli.Context) error {
