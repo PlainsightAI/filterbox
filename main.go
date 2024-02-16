@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/Masterminds/semver/v3"
+	"helm.sh/helm/v3/pkg/cli"
 	"io"
 	"log"
 	"math/rand"
@@ -13,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +29,12 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
 	corev1 "k8s.io/api/core/v1"
 	v1Networking "k8s.io/api/networking/v1"
+	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -42,75 +43,130 @@ import (
 )
 
 var (
-	version        = "unknown"
-	commit         = "unknown"
-	date           = "unknown"
-	settings       *cli.EnvSettings
-	src            rand.Source
-	url            = "https://plainsightai.github.io/helm-charts/"
-	helmInstallURL = "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
-	k3sInstallURL  = "https://get.k3s.io"
-	repoName       = "plainsight-technologies"
-	namespace      = "plainsight"
+	version = "v0.0.0"
+	commit  = ""
+	date    = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	//settings                   *cli.EnvSettings
+	src                        rand.Source
+	filterboxGithubReleasesURL = "https://api.github.com/repos/PlainsightAI/filterbox/tags"
+	plainsightHelmchartURL     = "https://plainsightai.github.io/helm-charts/"
+	helmInstallURL             = "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+	nvidiaGPGKeyURL            = "https://nvidia.github.io/nvidia-docker/gpgkey"
+	lambdaStackURL             = "https://lambdalabs.com/install-lambda-stack.sh"
+	k3sInstallURL              = "https://get.k3s.io"
+	repoName                   = "plainsight-technologies"
+	plainsightNamespace        = "plainsight"
+	nvidiaGpuOperatorNamespace = "gpu-operator"
+	nvidiaHelmRepoURL          = "https://helm.ngc.nvidia.com/nvidia"
 )
 
+var installDeps = map[string]bool{
+	"curl":  false,
+	"wget":  false,
+	"socat": false,
+}
+
 func init() {
-	_ = os.Setenv("HELM_NAMESPACE", namespace)
-	settings = cli.New()
 	src = rand.NewSource(time.Now().UnixNano())
+
+	latestRelease, err := latestfilterboxRelease()
+	if err != nil {
+		fmt.Println("Error fetching latest filterbox release:", err)
+		return
+	}
+
+	currentVersion, err := semver.NewVersion(version)
+	if err != nil {
+		fmt.Println("Error parsing current sem version:", err)
+		return
+	}
+
+	availableVersion, err := semver.NewVersion(latestRelease)
+	if err != nil {
+		fmt.Println("Error parsing latest sem version release:", err)
+		return
+	}
+
+	if currentVersion.LessThan(availableVersion) {
+		fmt.Printf("\nNew filterbox version available: %s\n\n", latestRelease)
+	}
+}
+
+func runCmd(cmd string, args ...string) error {
+	c := exec.Command(cmd, args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+func getUbuntuVersion() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		fmt.Println("Error reading /etc/os-release:", err)
+		os.Exit(1)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 && parts[0] == "VERSION_CODENAME" {
+			return strings.Trim(parts[1], "\"")
+		}
+	}
+
+	return ""
+}
+
+func supportedUbuntuVersion() bool {
+	supportedVersions := []string{"focal", "jammy"}
+	ubuntuVersion := getUbuntuVersion()
+
+	for _, v := range supportedVersions {
+		if ubuntuVersion == v {
+			return true
+		}
+	}
+
+	fmt.Printf("Invalid Ubuntu version: %s\nSupported versions: %s\n", ubuntuVersion, supportedVersions)
+	return false
+}
+
+func setupNvidiaRuntimeClass() error {
+	runtimeClass := &nodev1.RuntimeClass{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "node.k8s.io/v1", Kind: "RuntimeClass"},
+		ObjectMeta: metav1.ObjectMeta{Name: "nvidia"},
+		Handler:    "nvidia",
+		//Scheduling: &nodev1.Scheduling{
+		//	NodeSelector: map[string]string{"accelerator": "nvidia"},
+		//	Tolerations: []corev1.Toleration{
+		//		{
+		//			Key:      "accelerator",
+		//			Operator: corev1.TolerationOpExists,
+		//			Effect:   corev1.TaintEffectNoSchedule,
+		//		},
+		//	},
+		//},
+	}
+
+	k8sClient, err := K8sClient()
+	if err != nil || k8sClient == nil {
+		return err
+	}
+
+	runtimeClassClient := k8sClient.NodeV1().RuntimeClasses()
+	_, err = runtimeClassClient.Create(context.Background(), runtimeClass, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("RuntimeClass created successfully.")
+	return nil
 }
 
 func main() {
-
-	// Retrieve information about the host OS and architecture
-	operatingSys := runtime.GOOS
-	arch := runtime.GOARCH
-
-	if operatingSys != "linux" {
-		println("Currently only linux is supported")
-		os.Exit(1)
-	}
-
-	var validArch = false
-
-	switch arch {
-	case "amd64", "x86_64", "arm64":
-		validArch = true
-	}
-
-	if !validArch {
-		println(fmt.Sprintf("Detected Linux but unsupported architecture: %s", arch))
-		os.Exit(1)
-	}
-
-	var (
-		curlExists, wgetExists, socatExists bool
-	)
-
-	if _, err := exec.LookPath("curl"); err == nil {
-		curlExists = true
-	}
-
-	if _, err := exec.LookPath("wget"); err == nil {
-		wgetExists = true
-	}
-
-	if _, err := exec.LookPath("socat"); err == nil {
-		socatExists = true
-	}
-
-	if !curlExists && !wgetExists {
-		println("sudo apt update")
-		println("sudo apt install curl")
-		println("sudo apt install wget ")
-		log.Fatal("You must install either curl or wget")
-	}
-
-	if !socatExists {
-		println("sudo apt update")
-		println("sudo apt install socat")
-		log.Fatal("You will need socat for port forwarding")
-	}
+	//if !supportedUbuntuVersion() {
+	//	os.Exit(1)
+	//}
 
 	app := &urcli.App{
 		Version: version,
@@ -121,6 +177,18 @@ func main() {
 				Aliases: []string{"i"},
 				Usage:   "initialize filterbox device",
 				Action:  initAction,
+			},
+			{
+				Name:    "nvidia",
+				Aliases: []string{"n"},
+				Usage:   "initialize nvidia",
+				Action:  nvidiaSetupAction,
+			},
+			{
+				Name:    "update",
+				Aliases: []string{"u"},
+				Usage:   "update filterbox to latest version",
+				Action:  updateFitlerboxAction,
 			},
 			{
 				Name:    "registry",
@@ -192,6 +260,15 @@ func main() {
 	}
 }
 
+func updateFitlerboxAction(c *urcli.Context) error {
+	cmd := exec.Command("bash", "-c", "sudo curl -sfL https://raw.githubusercontent.com/PlainsightAI/filterbox/main/install.sh | bash -")
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func createHelmRepoAction(c *urcli.Context) error {
 	println("Input your Helm Repository Configuration")
 	name := userInput("name: ")
@@ -220,6 +297,40 @@ func secureUserInput(prompt string) string {
 	return string(password)
 }
 
+func createNvidiaTimeSlicingConfig() error {
+
+	k8sClient, err := K8sClient()
+	if err != nil || k8sClient == nil {
+		return err
+	}
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "time-slicing-config-all",
+			Namespace: nvidiaGpuOperatorNamespace,
+		},
+		Data: map[string]string{
+			"any": `version: v1
+flags:
+  migStrategy: none
+sharing:
+  timeSlicing:
+    resources:
+    - name: nvidia.com/gpu
+      replicas: 4`,
+		},
+	}
+
+	// Create the ConfigMap
+	result, err := k8sClient.CoreV1().ConfigMaps(nvidiaGpuOperatorNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Created ConfigMap %q.\n", result.GetObjectMeta().GetName())
+	return nil
+}
+
 func createRegSecretAction(c *urcli.Context) error {
 	println("Input your Docker Registry Server Configuration")
 	server := userInput("server: ")
@@ -239,7 +350,7 @@ func createRegSecretAction(c *urcli.Context) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
-			Namespace: namespace,
+			Namespace: plainsightNamespace,
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{
@@ -253,7 +364,7 @@ func createRegSecretAction(c *urcli.Context) error {
 		},
 	}
 
-	_, err = k8sClient.CoreV1().Secrets(namespace).Create(c.Context, secret, metav1.CreateOptions{})
+	_, err = k8sClient.CoreV1().Secrets(plainsightNamespace).Create(c.Context, secret, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -267,7 +378,7 @@ func uninstallFilterAction(ctx *urcli.Context) error {
 		return err
 	}
 
-	deps, err := k8sClient.AppsV1().Deployments(namespace).List(ctx.Context, metav1.ListOptions{
+	deps, err := k8sClient.AppsV1().Deployments(plainsightNamespace).List(ctx.Context, metav1.ListOptions{
 		LabelSelector: labels.Set(map[string]string{"app.kubernetes.io/name": "filter"}).String(),
 	})
 	if err != nil {
@@ -283,7 +394,7 @@ func uninstallFilterAction(ctx *urcli.Context) error {
 	}
 	filterChoice := filterMenu.Display()
 
-	return UninstallChart(filterChoice)
+	return UninstallChart(filterChoice, plainsightNamespace)
 }
 
 func startFilterAction(ctx *urcli.Context) error {
@@ -292,7 +403,7 @@ func startFilterAction(ctx *urcli.Context) error {
 		return err
 	}
 
-	deps, err := k8sClient.AppsV1().Deployments(namespace).List(ctx.Context, metav1.ListOptions{
+	deps, err := k8sClient.AppsV1().Deployments(plainsightNamespace).List(ctx.Context, metav1.ListOptions{
 		LabelSelector: labels.Set(map[string]string{"app.kubernetes.io/name": "filter"}).String(),
 	})
 	if err != nil {
@@ -309,7 +420,7 @@ func startFilterAction(ctx *urcli.Context) error {
 	filterChoice := filterMenu.Display()
 
 	// Fetch the deployment
-	deployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx.Context, filterChoice, metav1.GetOptions{})
+	deployment, err := k8sClient.AppsV1().Deployments(plainsightNamespace).Get(ctx.Context, filterChoice, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -318,47 +429,10 @@ func startFilterAction(ctx *urcli.Context) error {
 	deployment.Spec.Replicas = new(int32)
 	*deployment.Spec.Replicas = 1
 
-	_, err = k8sClient.AppsV1().Deployments(namespace).Update(ctx.Context, deployment, metav1.UpdateOptions{})
+	_, err = k8sClient.AppsV1().Deployments(plainsightNamespace).Update(ctx.Context, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func dockerSetup() error {
-	// Check if Docker is already installed
-	if _, err := exec.LookPath("docker"); err == nil {
-		return nil
-	}
-
-	// Attempt to install Docker
-	fmt.Println("Docker is not installed. Attempting to install...")
-
-	// Update APT
-	updateAPTCmd := exec.Command("sudo", "apt", "update")
-	updateAPTCmd.Stdout = os.Stdout
-	updateAPTCmd.Stderr = os.Stderr
-	if err := updateAPTCmd.Run(); err != nil {
-		return errors.New("failed to update APT")
-	}
-
-	// Run installation commands
-	installCmd := exec.Command("sudo", "apt", "install", "docker.io", "-y")
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-	if err := installCmd.Run(); err != nil {
-		return errors.New("failed to install Docker, please install it manually")
-	}
-
-	// Add the user to the docker group
-	usermodCmd := exec.Command("sudo", "usermod", "-aG", "docker", os.Getenv("USER"))
-	usermodCmd.Stdout = os.Stdout
-	usermodCmd.Stderr = os.Stderr
-	if err := usermodCmd.Run(); err != nil {
-		return errors.New("failed to add user to the docker group, please add manually")
-	}
-
-	fmt.Println("Docker has been installed successfully.")
 	return nil
 }
 
@@ -368,7 +442,7 @@ func stopFiltersAction(ctx *urcli.Context) error {
 		return err
 	}
 
-	deps, err := k8sClient.AppsV1().Deployments(namespace).List(ctx.Context, metav1.ListOptions{
+	deps, err := k8sClient.AppsV1().Deployments(plainsightNamespace).List(ctx.Context, metav1.ListOptions{
 		LabelSelector: labels.Set(map[string]string{"app.kubernetes.io/name": "filter"}).String(),
 	})
 	if err != nil {
@@ -385,7 +459,7 @@ func stopFiltersAction(ctx *urcli.Context) error {
 	filterChoice := filterMenu.Display()
 
 	// Fetch the deployment
-	deployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx.Context, filterChoice, metav1.GetOptions{})
+	deployment, err := k8sClient.AppsV1().Deployments(plainsightNamespace).Get(ctx.Context, filterChoice, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -394,7 +468,7 @@ func stopFiltersAction(ctx *urcli.Context) error {
 	deployment.Spec.Replicas = new(int32)
 	*deployment.Spec.Replicas = 0
 
-	_, err = k8sClient.AppsV1().Deployments(namespace).Update(ctx.Context, deployment, metav1.UpdateOptions{})
+	_, err = k8sClient.AppsV1().Deployments(plainsightNamespace).Update(ctx.Context, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
@@ -408,7 +482,7 @@ func listFiltersAction(ctx *urcli.Context) error {
 		return err
 	}
 
-	deps, err := k8sClient.AppsV1().Deployments(namespace).List(ctx.Context, metav1.ListOptions{
+	deps, err := k8sClient.AppsV1().Deployments(plainsightNamespace).List(ctx.Context, metav1.ListOptions{
 		LabelSelector: labels.Set(map[string]string{"app.kubernetes.io/name": "filter"}).String(),
 	})
 	if err != nil {
@@ -476,72 +550,116 @@ func installFilterAction(cCtx *urcli.Context) error {
 
 	name := fmt.Sprintf("%s-%s", filterChoice, strings.ToLower(randString(4)))
 
-	return InstallChart(name, repoName, "filter", args)
+	return InstallChart(name, repoName, "filter", plainsightNamespace, args)
 }
 
 func checkHelm() error {
 	_, err := exec.LookPath("helm")
 	if err != nil {
 		println("")
-		println("unable to find helm (kubernetes package manager)")
-		input := userInput("would you like to install helm? (Y/n): ")
-
-		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
-			// Make an HTTP GET request to fetch the script content
-			resp, err := http.Get(helmInstallURL)
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := resp.Body.Close(); err != nil {
-					panic(err)
-				}
-			}()
-
-			// Create a temporary file to store the script
-			file, err := os.CreateTemp("", "helm-script-")
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := os.Remove(file.Name()); err != nil {
-					panic(err)
-				}
-			}()
-
-			// Write the script content to the temporary file
-			_, err = io.Copy(file, resp.Body)
-			if err != nil {
-				return err
-			}
-
-			// Close the file to ensure it's fully written and closed
-			if err := file.Close(); err != nil {
-				return err
-			}
-
-			// Make the script file executable
-			err = os.Chmod(file.Name(), 0755)
-			if err != nil {
-				return err
-			}
-
-			// Execute the script
-			cmd := exec.Command(file.Name())
-
-			// Set the output to os.Stdout and os.Stderr to see the installation progress
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-
-			// Run the command
-			if cerr := cmd.Run(); cerr != nil {
-				return cerr
-			}
-			return nil
+		println("installing helm (kubernetes package manager)")
+		// Make an HTTP GET request to fetch the script content
+		resp, err := http.Get(helmInstallURL)
+		if err != nil {
+			return err
 		}
-		println("helm is required")
-		return errors.New("please install helm and try again")
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				panic(err)
+			}
+		}()
+
+		// Create a temporary file to store the script
+		file, err := os.CreateTemp("", "helm-script-")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := os.Remove(file.Name()); err != nil {
+				panic(err)
+			}
+		}()
+
+		// Write the script content to the temporary file
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			return err
+		}
+
+		// Close the file to ensure it's fully written and closed
+		if err := file.Close(); err != nil {
+			return err
+		}
+
+		// Make the script file executable
+		err = os.Chmod(file.Name(), 0755)
+		if err != nil {
+			return err
+		}
+
+		// Execute the script
+		cmd := exec.Command(file.Name())
+
+		// Set the output to os.Stdout and os.Stderr to see the installation progress
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		// Run the command
+		if cerr := cmd.Run(); cerr != nil {
+			return cerr
+		}
 	}
+	return nil
+}
+
+func lambdaStackInstall() error {
+	resp, err := http.Get(lambdaStackURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
+	// Create a temporary file to store the script
+	file, err := os.CreateTemp("", "lambda-stack-script-")
+	if err != nil {
+		return err
+	}
+
+	// Write the script content to the temporary file
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// Close the file to ensure it's fully written and closed
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	// Make the script file executable
+	err = os.Chmod(file.Name(), 0755)
+	if err != nil {
+		return err
+	}
+
+	_ = os.Setenv("I_AGREE_TO_THE_CUDNN_LICENSE", "1")
+
+	// Execute the script with the specified arguments
+	cmd := exec.Command("sh", file.Name())
+
+	// Set the output to os.Stdout and os.Stderr to see the installation progress
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Run the command
+	if cerr := cmd.Run(); cerr != nil {
+		return cerr
+	}
+
 	return nil
 }
 
@@ -549,68 +667,62 @@ func checkK8s() error {
 	_, err := K8sClient()
 	if err != nil {
 		println("")
-		println("unable to connect to kubernetes cluster")
-		input := userInput("would you like to install k3s? (Y/n)")
-
-		if input == "" || strings.ToLower(input) == "y" || strings.ToLower(input) == "yes" {
-			// Make an HTTP GET request to fetch the script content
-			resp, err := http.Get(k3sInstallURL)
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := resp.Body.Close(); err != nil {
-					panic(err)
-				}
-			}()
-
-			// Create a temporary file to store the script
-			file, err := os.CreateTemp("", "k3s-script-")
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := os.Remove(file.Name()); err != nil {
-					panic(err)
-				}
-			}()
-
-			// Write the script content to the temporary file
-			_, err = io.Copy(file, resp.Body)
-			if err != nil {
-				return err
-			}
-
-			// Close the file to ensure it's fully written and closed
-			if err := file.Close(); err != nil {
-				return err
-			}
-
-			// Make the script file executable
-			err = os.Chmod(file.Name(), 0755)
-			if err != nil {
-				return err
-			}
-
-			// Set the environment variable for INSTALL_K3S_EXEC
-			_ = os.Setenv("INSTALL_K3S_EXEC", "--docker")
-
-			// Execute the script with the specified arguments
-			cmd := exec.Command("sh", file.Name(), "--write-kubeconfig-mode", "644")
-
-			// Set the output to os.Stdout and os.Stderr to see the installation progress
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-
-			// Run the command
-			if cerr := cmd.Run(); cerr != nil {
-				return cerr
-			}
-			_ = os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
-			return nil
+		println("unable to connect to a kubernetes cluster")
+		// Make an HTTP GET request to fetch the script content
+		resp, err := http.Get(k3sInstallURL)
+		if err != nil {
+			return err
 		}
-		println("kubernetes is required")
-		return errors.New("please install kubernetes and try again")
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				panic(err)
+			}
+		}()
+
+		// Create a temporary file to store the script
+		file, err := os.CreateTemp("", "k3s-script-")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := os.Remove(file.Name()); err != nil {
+				panic(err)
+			}
+		}()
+
+		// Write the script content to the temporary file
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			return err
+		}
+
+		// Close the file to ensure it's fully written and closed
+		if err := file.Close(); err != nil {
+			return err
+		}
+
+		// Make the script file executable
+		err = os.Chmod(file.Name(), 0755)
+		if err != nil {
+			return err
+		}
+
+		// Set the environment variable for INSTALL_K3S_EXEC
+		//_ = os.Setenv("INSTALL_K3S_EXEC", "--docker")
+
+		// Execute the script with the specified arguments
+		cmd := exec.Command("sh", file.Name(), "--write-kubeconfig-mode", "644")
+
+		// Set the output to os.Stdout and os.Stderr to see the installation progress
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		// Run the command
+		if cerr := cmd.Run(); cerr != nil {
+			return cerr
+		}
+		_ = os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+		return nil
 	}
 
 	return nil
@@ -662,8 +774,20 @@ func setupKubeConfig() error {
 }
 
 func initAction(cCtx *urcli.Context) error {
+	if err := runCmd("sudo", "apt", "update"); err != nil {
+		return err
+	}
 
-	if err := dockerSetup(); err != nil {
+	// Check if the required dependencies are installed
+	for dep, _ := range installDeps {
+		if _, err := exec.LookPath(dep); err != nil {
+			if err := runCmd("sudo", "apt", "install", "-y", dep); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := lambdaStackInstall(); err != nil {
 		return err
 	}
 
@@ -680,8 +804,6 @@ func initAction(cCtx *urcli.Context) error {
 
 	k8sClient, err := K8sClient()
 	if err != nil || k8sClient == nil {
-		println("failed to find k8s client config")
-		println("make sure ~/.kube/config is setup properly")
 		return err
 	}
 
@@ -689,19 +811,25 @@ func initAction(cCtx *urcli.Context) error {
 		return err
 	}
 
-	// Add helm repo
-	if err := RepoAdd(repoName, url, "", ""); err != nil {
-		return err
+	// Add Plainsight helm repo
+	if err := RepoAdd(repoName, plainsightHelmchartURL, "", ""); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
 	}
+
 	// Update charts from the helm repo
 	RepoUpdate()
+
 	// Setup Plainsight Namaespace
-	AddNamespace(ctx, k8sClient)
+	AddNamespace(ctx, plainsightNamespace, k8sClient)
+
 	// Install NanoMQ
 	nanoMQ := "nanomq"
-	if err := InstallChart(nanoMQ, repoName, nanoMQ, nil); err != nil {
+	if err := InstallChart(nanoMQ, repoName, nanoMQ, plainsightNamespace, nil); err != nil {
 		return err
 	}
+
 	if err := InstallIngress(ctx, nanoMQ, 8083, k8sClient); err != nil {
 		return err
 	}
@@ -711,14 +839,14 @@ func initAction(cCtx *urcli.Context) error {
 func InstallIngress(ctx context.Context, name string, port int32, k8sClient *kubernetes.Clientset) error {
 	prefixPathTyp := v1Networking.PathTypePrefix
 
-	_, err := k8sClient.NetworkingV1().Ingresses(namespace).Create(ctx, &v1Networking.Ingress{
+	_, err := k8sClient.NetworkingV1().Ingresses(plainsightNamespace).Create(ctx, &v1Networking.Ingress{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Ingress",
 			APIVersion: "networking.k8s.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-ingress", name),
-			Namespace: namespace,
+			Namespace: plainsightNamespace,
 		},
 		Spec: v1Networking.IngressSpec{
 			Rules: []v1Networking.IngressRule{
@@ -750,14 +878,14 @@ func InstallIngress(ctx context.Context, name string, port int32, k8sClient *kub
 	return err
 }
 
-func AddNamespace(ctx context.Context, client *kubernetes.Clientset) {
+func AddNamespace(ctx context.Context, name string, client *kubernetes.Clientset) {
 	// check if namespace already exists
-	_, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	_, err := client.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		return
 	}
 
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err = client.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
 		log.Fatal(err)
@@ -766,6 +894,9 @@ func AddNamespace(ctx context.Context, client *kubernetes.Clientset) {
 
 // RepoAdd adds repo with given name and url
 func RepoAdd(name, url, username, password string) error {
+	_ = os.Setenv("HELM_NAMESPACE", plainsightNamespace)
+	settings := cli.New()
+
 	repoFile := settings.RepositoryConfig
 
 	//Ensure the file directory exists as it is required for file locking
@@ -826,6 +957,8 @@ func RepoAdd(name, url, username, password string) error {
 
 // RepoUpdate updates charts for all helm repos
 func RepoUpdate() {
+	_ = os.Setenv("HELM_NAMESPACE", plainsightNamespace)
+	settings := cli.New()
 	repoFile := settings.RepositoryConfig
 
 	f, err := repo.LoadFile(repoFile)
@@ -859,9 +992,11 @@ func RepoUpdate() {
 }
 
 // UninstallChart uninstalls a Helm chart
-func UninstallChart(name string) error {
+func UninstallChart(name, namespace string) error {
+	_ = os.Setenv("HELM_NAMESPACE", plainsightNamespace)
+	settings := cli.New()
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), debug); err != nil {
 		return err
 	}
 
@@ -878,9 +1013,11 @@ func UninstallChart(name string) error {
 }
 
 // InstallChart installs the helm chart
-func InstallChart(name, repo, chart string, values map[string]interface{}) error {
+func InstallChart(name, repo, chart, namespace string, values map[string]interface{}) error {
+	_ = os.Setenv("HELM_NAMESPACE", namespace)
+	settings := cli.New()
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), debug); err != nil {
 		return err
 	}
 
@@ -940,12 +1077,14 @@ func InstallChart(name, repo, chart string, values map[string]interface{}) error
 		}
 	}
 
+	client.Timeout = 300 * time.Second
+	client.Wait = true
 	client.Namespace = settings.Namespace()
 	release, err := client.Run(chartRequested, values)
 	if err != nil {
 		return err
 	}
-	fmt.Println(release.Manifest)
+	fmt.Println(release.Name)
 	return nil
 }
 
@@ -1043,47 +1182,241 @@ type Tag struct {
 	// Add other fields if needed
 }
 
-func latestfilterboxRelease() {
+func latestfilterboxRelease() (string, error) {
 	// URL of the GitHub API endpoint
-	url := "https://api.github.com/repos/PlainsightAI/filterbox/tags"
 
 	// Make the HTTP GET request
-	response, err := http.Get(url)
+	response, err := http.Get(filterboxGithubReleasesURL)
 	if err != nil {
-		fmt.Println("Error making HTTP request:", err)
-		return
+		return version, err
 	}
 	defer response.Body.Close()
 
 	// Read the response body
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return
+		return version, err
 	}
 
 	// Parse the JSON response into a slice of Tag structs
 	var tags []Tag
 	err = json.Unmarshal(body, &tags)
 	if err != nil {
-		fmt.Println("Error parsing JSON:", err)
-		return
+		return version, err
 	}
 
 	// Check if there's at least one tag
 	if len(tags) > 0 {
 		// Extract the name of the first tag
-		firstTagName := tags[0].Name
-
-		// Print the result
-		fmt.Println(firstTagName)
-	} else {
-		fmt.Println("No tags found.")
+		return tags[0].Name, nil
 	}
+	return version, nil
 }
 
-func checkfilterboxVersion() {
-	if version != "unknown" {
-
+func getDistribution() (string, error) {
+	cmd := exec.Command("bash", "-c", ". /etc/os-release; echo $ID$VERSION_ID")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
 	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func addNvidiaKey() error {
+	resp, err := http.Get(nvidiaGPGKeyURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
+	key, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("sudo", "apt-key", "add", "-")
+	cmd.Stdin = strings.NewReader(string(key))
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func addNvidiaRepo(distribution string) error {
+	repoURL := fmt.Sprintf("https://nvidia.github.io/nvidia-docker/%s/nvidia-docker.list", distribution)
+	resp, err := http.Get(repoURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
+	r, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("sudo", "tee", "/etc/apt/sources.list.d/nvidia-docker.list")
+	cmd.Stdin = strings.NewReader(string(r))
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func nvidiaSetupAction(c *urcli.Context) error {
+	//cmd := exec.Command("nvidia-smi")
+	//cmd.Stdout = os.Stdout
+	//cmd.Stderr = os.Stderr
+	//err := cmd.Run()
+	//if err != nil {
+	//	fmt.Println("No Nvidia GPU in system!")
+	//	return err
+	//}
+
+	distribution, err := getDistribution()
+	if err != nil {
+		return err
+	}
+
+	err = addNvidiaKey()
+	if err != nil {
+		return err
+	}
+
+	err = addNvidiaRepo(distribution)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("NVIDIA repository added successfully.")
+
+	if err := runCmd("sudo", "apt", "update"); err != nil {
+		return err
+	}
+
+	// Check if the required dependencies are installed
+	if err := runCmd("sudo", "apt", "install", "-y", "nvidia-container-runtime"); err != nil {
+		return err
+	}
+
+	fmt.Println("NVIDIA nvidia-container-runtime installed successfully.")
+
+	if err := setupK3sNvidiaContainerRuntime(); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	fmt.Println("NVIDIA nvidia-container-runtime setup successfully.")
+
+	if err := setupNvidiaRuntimeClass(); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	// Add NVIDIA Helm Repo
+	if err := RepoAdd("nvidia", nvidiaHelmRepoURL, "", ""); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	// Update charts from the helm repo
+	RepoUpdate()
+
+	k8sClient, err := K8sClient()
+	if err != nil || k8sClient == nil {
+		return err
+	}
+
+	// Setup Nvidia Namaespace
+	AddNamespace(c.Context, nvidiaGpuOperatorNamespace, k8sClient)
+
+	values := map[string]interface{}{
+		"toolkit": map[string]interface{}{
+			"env": []map[string]interface{}{
+				{
+					"name":  "CONTAINERD_CONFIG",
+					"value": "/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
+				},
+				{
+					"name":  "CONTAINERD_SOCKET",
+					"value": "/run/k3s/containerd/containerd.sock",
+				},
+				{
+					"name":  "CONTAINERD_RUNTIME_CLASS",
+					"value": "nvidia",
+				},
+				{
+					"name":  "CONTAINERD_SET_AS_DEFAULT",
+					"value": "true",
+				},
+			},
+		},
+	}
+
+	// Install Nvidia GPU Operator
+	if err := InstallChart("gpu-operator", "nvidia", "gpu-operator", nvidiaGpuOperatorNamespace, values); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	if err := createNvidiaTimeSlicingConfig(); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	if err := patchNvidiaGPUClusterPolicy(c.Context); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func patchNvidiaGPUClusterPolicy(ctx context.Context) error {
+	// Define the kubectl command and arguments
+	command := "kubectl"
+	args := []string{"-n", "gpu-operator", "patch", "clusterpolicy/cluster-policy", "--type", "merge", "-p", `{"spec": {"devicePlugin": {"config": {"name": "time-slicing-config-all", "default": "any"}}}}`}
+
+	// Execute the command
+	cmd := exec.Command(command, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+
+	println(string(output))
+	return nil
+}
+
+func setupK3sNvidiaContainerRuntime() error {
+	// Define the content of the file
+	const configContent = `{{ template "base" . }}
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."custom"]
+  runtime_type = "io.containerd.runc.v2"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."custom".options]
+  BinaryName = "/usr/bin/nvidia-container-runtime"`
+
+	// Use sudo to create or open the file for writing
+	cmd := exec.Command("sudo", "tee", "/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl")
+	cmd.Stdin = strings.NewReader(configContent)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
