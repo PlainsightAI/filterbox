@@ -99,27 +99,29 @@ func runCmd(cmd string, args ...string) error {
 	return c.Run()
 }
 
-func getUbuntuVersion() string {
+func getUbuntuVersion() (string, error) {
 	data, err := os.ReadFile("/etc/os-release")
 	if err != nil {
-		fmt.Println("Error reading /etc/os-release:", err)
-		os.Exit(1)
+		return "", err
 	}
 
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) == 2 && parts[0] == "VERSION_CODENAME" {
-			return strings.Trim(parts[1], "\"")
+			return strings.Trim(parts[1], "\""), nil
 		}
 	}
 
-	return ""
+	return "", errors.New("failed to get Ubuntu version")
 }
 
 func supportedUbuntuVersion() bool {
 	supportedVersions := []string{"focal", "jammy"}
-	ubuntuVersion := getUbuntuVersion()
+	ubuntuVersion, err := getUbuntuVersion()
+	if err != nil {
+		return false
+	}
 
 	for _, v := range supportedVersions {
 		if ubuntuVersion == v {
@@ -164,9 +166,10 @@ func setupNvidiaRuntimeClass() error {
 }
 
 func main() {
-	//if !supportedUbuntuVersion() {
-	//	os.Exit(1)
-	//}
+	if !supportedUbuntuVersion() {
+		fmt.Println("Ubuntu (debian/apt) Only")
+		os.Exit(1)
+	}
 
 	app := &urcli.App{
 		Version: version,
