@@ -842,6 +842,8 @@ func initAction(cCtx *urcli.Context) error {
 	if err := InstallIngress(ctx, nanoMQ, 8083, k8sClient); err != nil {
 		return err
 	}
+
+	fmt.Println("Please run \"sudo reboot\" to complete the installation.")
 	return nil
 }
 
