@@ -559,7 +559,7 @@ func installFilterAction(cCtx *urcli.Context) error {
 
 	name := fmt.Sprintf("%s-%s", filterChoice, strings.ToLower(randString(4)))
 
-	return InstallChart(name, repoName, "filter", plainsightNamespace, args)
+	return InstallChart(name, repoName, "filter", plainsightNamespace, false, args)
 }
 
 func checkHelm() error {
@@ -835,7 +835,7 @@ func initAction(cCtx *urcli.Context) error {
 
 	// Install NanoMQ
 	nanoMQ := "nanomq"
-	if err := InstallChart(nanoMQ, repoName, nanoMQ, plainsightNamespace, nil); err != nil {
+	if err := InstallChart(nanoMQ, repoName, nanoMQ, plainsightNamespace, true, nil); err != nil {
 		return err
 	}
 
@@ -1024,7 +1024,7 @@ func UninstallChart(name, namespace string) error {
 }
 
 // InstallChart installs the helm chart
-func InstallChart(name, repo, chart, namespace string, values map[string]interface{}) error {
+func InstallChart(name, repo, chart, namespace string, waitForDeployment bool, values map[string]interface{}) error {
 	_ = os.Setenv("HELM_NAMESPACE", namespace)
 	settings := cli.New()
 	actionConfig := new(action.Configuration)
@@ -1089,7 +1089,7 @@ func InstallChart(name, repo, chart, namespace string, values map[string]interfa
 	}
 
 	client.Timeout = 300 * time.Second
-	client.Wait = true
+	client.Wait = waitForDeployment
 	client.Namespace = settings.Namespace()
 	release, err := client.Run(chartRequested, values)
 	if err != nil {
@@ -1378,7 +1378,7 @@ func nvidiaSetupAction(c *urcli.Context) error {
 	}
 
 	// Install Nvidia GPU Operator
-	if err := InstallChart("gpu-operator", "nvidia", "gpu-operator", nvidiaGpuOperatorNamespace, values); err != nil {
+	if err := InstallChart("gpu-operator", "nvidia", "gpu-operator", nvidiaGpuOperatorNamespace, true, values); err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
 			return err
 		}
