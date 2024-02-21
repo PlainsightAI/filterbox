@@ -233,7 +233,7 @@ func main() {
 				{
 					Name:    "uninstall",
 					Aliases: []string{"u"},
-					Usage:   "run filter installed on device",
+					Usage:   "uninstall filter from device",
 					Action:  uninstallFilterAction,
 				},
 			},
