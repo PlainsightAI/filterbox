@@ -46,18 +46,27 @@ var (
 	version = "v0.0.0"
 	commit  = ""
 	date    = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	//settings                   *cli.EnvSettings
-	src                        rand.Source
+)
+
+// Dep URL/Endpoints
+var (
 	filterboxGithubReleasesURL = "https://api.github.com/repos/PlainsightAI/filterbox/tags"
 	plainsightHelmchartURL     = "https://plainsightai.github.io/helm-charts/"
 	helmInstallURL             = "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
 	nvidiaGPGKeyURL            = "https://nvidia.github.io/nvidia-docker/gpgkey"
 	lambdaStackURL             = "https://lambdalabs.com/install-lambda-stack.sh"
 	k3sInstallURL              = "https://get.k3s.io"
+	nvidiaHelmRepoURL          = "https://helm.ngc.nvidia.com/nvidia"
 	repoName                   = "plainsight-technologies"
 	plainsightNamespace        = "plainsight"
 	nvidiaGpuOperatorNamespace = "gpu-operator"
-	nvidiaHelmRepoURL          = "https://helm.ngc.nvidia.com/nvidia"
+	k3sConfig                  = "/etc/rancher/k3s/k3s.yaml"
+)
+
+var (
+	src                    rand.Source
+	k8sLabelSelector       = map[string]string{"app.kubernetes.io/name": "filter"}
+	localUserK8sConfigPath = filepath.Join(homeDir(), ".kube", "config")
 )
 
 var installDeps = map[string]bool{
@@ -67,7 +76,7 @@ var installDeps = map[string]bool{
 }
 
 func updateAvailable() (bool, string, error) {
-	latestRelease, err := latestfilterboxRelease()
+	latestRelease, err := latestFilterboxRelease()
 	if err != nil {
 		return false, "", err
 	}
@@ -251,7 +260,7 @@ func main() {
 			Name:    "update",
 			Aliases: []string{"u"},
 			Usage:   "update filterbox to latest version",
-			Action:  updateFitlerboxAction,
+			Action:  updateFilterboxAction,
 		})
 	}
 
@@ -274,7 +283,7 @@ func updateFilterBox() error {
 	return nil
 }
 
-func updateFitlerboxAction(c *urcli.Context) error {
+func updateFilterboxAction(c *urcli.Context) error {
 	return updateFilterBox()
 }
 
@@ -388,7 +397,7 @@ func uninstallFilterAction(ctx *urcli.Context) error {
 	}
 
 	deps, err := k8sClient.AppsV1().Deployments(plainsightNamespace).List(ctx.Context, metav1.ListOptions{
-		LabelSelector: labels.Set(map[string]string{"app.kubernetes.io/name": "filter"}).String(),
+		LabelSelector: labels.Set(k8sLabelSelector).String(),
 	})
 	if err != nil {
 		return err
@@ -1011,10 +1020,8 @@ func UninstallChart(name, namespace string) error {
 		return err
 	}
 
-	client := action.NewUninstall(actionConfig)
-
 	// Run uninstall
-	resp, err := client.Run(name)
+	resp, err := action.NewUninstall(actionConfig).Run(name)
 	if err != nil {
 		return err
 	}
@@ -1142,16 +1149,14 @@ func debug(format string, v ...interface{}) {
 func K8sClient() (*kubernetes.Clientset, error) {
 
 	var (
-		c             *rest.Config
-		err           error
-		localUserPath = filepath.Join(homeDir(), ".kube", "config")
-		k3sConfig     = "/etc/rancher/k3s/k3s.yaml"
+		c   *rest.Config
+		err error
 	)
 
 	// Check for valid Local user Config (~/.kube/config
-	_, err = os.Stat(localUserPath)
+	_, err = os.Stat(localUserK8sConfigPath)
 	if err == nil {
-		c, err = clientcmd.BuildConfigFromFlags("", localUserPath)
+		c, err = clientcmd.BuildConfigFromFlags("", localUserK8sConfigPath)
 		if err != nil {
 			return nil, err
 		}
@@ -1193,7 +1198,7 @@ type Tag struct {
 	// Add other fields if needed
 }
 
-func latestfilterboxRelease() (string, error) {
+func latestFilterboxRelease() (string, error) {
 	// URL of the GitHub API endpoint
 
 	// Make the HTTP GET request
