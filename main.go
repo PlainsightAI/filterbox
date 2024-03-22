@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/Masterminds/semver/v3"
-	"helm.sh/helm/v3/pkg/cli"
 	"io"
 	"log"
 	"math/rand"
@@ -19,6 +17,9 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/Masterminds/semver/v3"
+	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/gofrs/flock"
 	"github.com/nexidian/gocliselect"
@@ -274,17 +275,13 @@ func main() {
 	}
 }
 
-func updateFilterBox() error {
+func updateFilterboxAction(c *urcli.Context) error {
 	cmd := exec.Command("bash", "-c", "sudo curl -sfL https://raw.githubusercontent.com/PlainsightAI/filterbox/main/install.sh | bash -")
 	err := cmd.Run()
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func updateFilterboxAction(c *urcli.Context) error {
-	return updateFilterBox()
 }
 
 func createHelmRepoAction(c *urcli.Context) error {
