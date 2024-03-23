@@ -169,3 +169,78 @@ navigate to ```video_feed/<your device id> ``` to view the video feed from your 
 ```
 http://localhost:8080/video_feed/0
 ```
+
+## Private Filters (Repo or Reg)
+Private filters can come from different helm repositories and/or docker registries
+
+### Private Docker Registry
+
+Setting up a private docker registry to pull images can be done with filterbox or with just kubectl
+
+
+## Filterbox
+
+```bash
+filterbox reg create
+```
+
+Example:
+```bash
+Input your Docker Registry Server Configuration
+server: plainsight.jfrog.io
+username: tsampson@plainsight.ai
+password (hidden):
+email: tsampson@plainsight.ai
+
+Name your kubernetes secret for reference
+secret-name: plainsight-jfrog-test
+```
+
+This will create a secret called "plainsight-jfrog-test" in the plainsight namespace. Now you can install the private filter while using the plainsight helm chart.
+
+First, create a helm vaules.yaml file and input your correct values for deviceSource (ex: RTSP addr), the imageOverride, and the new reg secret you just created as an imagePullSecrets:
+
+Example:
+```bash
+deviceSource: "rtsp://10.1.100.101:8008/uniqueID"
+imageOverride: "plainsight.jfrog.io/docker/filter-object-detection:0.1.0"
+imagePullSecrets:
+  - name: plainsight-jfrog-test
+```
+
+Now you can install the helm chart with thost values:
+
+```bash
+helm install -n plainsight detect-cam1 plainsight-technologies/filter --version 0.18.0 -f ./values.yaml
+```
+
+
+
+## Updating a Filter
+
+There are multiple ways to update a filter but the main goal is to update the Image Tag.
+
+### Kubectl
+
+```bash
+kubectl -n plainsight get deployments
+kubectl -n plainsight edit deployments/{filter-deployment-name}
+```
+
+Update the "image" field to the desired Tag/Digest Value
+
+
+### Helm (Plainsight Repo)
+
+```bash
+helm -n plainsight list
+helm -n plainsight upgrade {filter-unique-name} plainsight-technologies/filter --version {version}
+```
+
+
+### Filterbox (uninstall and reinstall)
+
+```bash
+filterbox filter uninstall
+filterbox filter install
+```
